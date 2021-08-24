@@ -54,14 +54,14 @@ func getSetPara(para *paraOption, sendNumA, sendNumB *int) {
 		re := regexp.MustCompile("[0-9]+")
 		freNum, _ := strconv.Atoi(re.FindString(para.setFre))
 		switch {
-		case para.pingPongOpt == "set" && para.setGoroutine == "A":
+		case para.pingPongOpt == "set-ping-pong" && para.setGoroutine == "A" && freNum != 0:
 			para.freA = freNum
-		case para.pingPongOpt == "set" && para.setGoroutine == "B":
+		case para.pingPongOpt == "set-ping-pong" && para.setGoroutine == "B" && freNum != 0:
 			para.freB = freNum
-		case para.pingPongOpt == "set" && freNum != 0:
+		case para.pingPongOpt == "set-ping-pong" && freNum != 0:
 			para.freA = freNum
 			para.freB = freNum
-		case para.pingPongOpt == "get":
+		case para.pingPongOpt == "get-ping-pong":
 			fmt.Printf("goroutineA sendNum %d sendFre %s,goroutineB sendNum %d sendFre %s\n",
 				*sendNumA, strconv.Itoa(para.freA)+"s", *sendNumB, strconv.Itoa(para.freB)+"s")
 		}
