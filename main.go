@@ -1,109 +1,101 @@
-/*实现两个goroutine通信，第三个goroutine可以设置各自频率，并查找各自发送次数，ctrl+c后，各个goroutine都可以退出*/
+/*实现两个goroutine通信，main可以设置各自频率，并查找各自发送次数，ctrl+c后，各个goroutine都可以退出*/
 package main
 
 import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
+	"strconv"
 	"sync"
+	"time"
 )
 
-//根据设置的频率发送数据，并监听是否ctrl+c,若有则退出，并关闭发送chan
-func goroutine1(para *paraOption) {
-	defer para.wg.Done()
-	sendNum1 := 0
+//根据设置的频率发送数据，并监听Ctrl+c，若输入Ctrl+c则退出
+func goroutine(wg *sync.WaitGroup, sendNum *int, msgRecv, msgSend chan bool, fre int) {
+	defer wg.Done()
+	var sigChan = make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	t := time.Tick(time.Duration(fre) * time.Second)
 	for {
 		select {
-		case sig := <-para.sigChan:
-			fmt.Println("goroutine1 | get", sig)
-			close(para.msgSend)
-			close(para.receNum1)
-			fmt.Println("goroutine1 | close channel, exit")
+		case sig := <-sigChan:
+			fmt.Println("goroutine | get, exit", sig)
+			fmt.Println("goroutine exit")
+			return
+		case <-t:
+			msgRecv <- true
+			*sendNum++
+		case <-msgSend:
+
+		default:
+		}
+	}
+}
+
+func getSetPara(para *paraOption, sendNumA, sendNumB *int) {
+	var sigChan = make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	fmt.Println(`please enter your demand:
+		set-ping-pong A 3s : set goroutine frequency A 3s and B default
+		set-ping-pong B 3s : set goroutine frequency B 3s and A default
+		set-ping-pong 3s : set goroutine A frequency 3s and B 3s
+		get-ping-pong:get sendNum and frequency of goroutine A and goroutine B
+		`)
+	for {
+		select {
+		case sig := <-sigChan:
+			fmt.Println("for | get", sig)
+			fmt.Println("for, exit")
 			return
 		default:
 		}
-		for i := 0; i < para.fre1; i++ {
-			para.msgSend <- true
-			sendNum1++
+		fmt.Scanf("%s %s %s\n", &para.pingPongOpt, &para.setGoroutine, &para.setFre)
+		re := regexp.MustCompile("[0-9]+")
+		freNum, _ := strconv.Atoi(re.FindString(para.setFre))
+		switch {
+		case para.pingPongOpt == "set" && para.setGoroutine == "A":
+			para.freA = freNum
+		case para.pingPongOpt == "set" && para.setGoroutine == "B":
+			para.freB = freNum
+		case para.pingPongOpt == "set" && freNum != 0:
+			para.freA = freNum
+			para.freB = freNum
+		case para.pingPongOpt == "get":
+			fmt.Printf("goroutineA sendNum %d sendFre %s,goroutineB sendNum %d sendFre %s\n",
+				*sendNumA, strconv.Itoa(para.freA)+"s", *sendNumB, strconv.Itoa(para.freB)+"s")
 		}
-		para.receNum1 <- sendNum1
-		for i := 0; i < para.fre2; i++ {
-			<-para.msgRecv
-		}
+		fmt.Printf("frequency A : %s B : %s:\n",
+			strconv.Itoa(para.freA)+"s", strconv.Itoa(para.freB)+"s")
 	}
-}
-
-//根据设置的频率发送数据，并判断接收chan是否关闭，若关闭，则退出
-func goroutine2(para *paraOption) {
-	defer para.wg.Done()
-	sendNum2 := 0
-	for {
-		for i := 0; i < para.fre1; i++ {
-			_, ok := <-para.msgSend
-			if !ok {
-				fmt.Println("goroutine2 | exit")
-				close(para.receNum2)
-				return
-			}
-		}
-		for i := 0; i < para.fre2; i++ {
-			para.msgRecv <- true
-			sendNum2++
-		}
-		para.receNum2 <- sendNum2
-	}
-}
-
-//设置频率，并获取两个goroutine发送个数，若chan关闭，则退出
-func goroutine3(para *paraOption) {
-	para.fre1 = 3
-	para.fre2 = 4
-Loop:
-	for {
-		sendNum1, ok := <-para.receNum1
-		if !ok {
-			break Loop
-		}
-		fmt.Println("goroutine1 RecvNum", sendNum1)
-		sendNum2, ok := <-para.receNum2
-		if !ok {
-			break Loop
-		}
-		fmt.Println("goroutine2 RecvNum", sendNum2)
-	}
-	fmt.Println("goroutine3 | exit")
-	para.wg.Done()
 }
 func newPara() *paraOption {
 	return &paraOption{
-		sigChan:  make(chan os.Signal, 1),
-		receNum1: make(chan int),
-		receNum2: make(chan int),
-		msgSend:  make(chan bool),
-		msgRecv:  make(chan bool),
-		wg:       sync.WaitGroup{},
-		fre1:     1,
-		fre2:     2,
+		freA: 1, //default frequency
+		freB: 2, //default frequency
 	}
 }
 
 type paraOption struct {
-	sigChan  chan os.Signal
-	receNum1 chan int
-	receNum2 chan int
-	msgSend  chan bool
-	msgRecv  chan bool
-	wg       sync.WaitGroup
-	fre1     int
-	fre2     int
+	freA         int
+	freB         int
+	pingPongOpt  string
+	setGoroutine string
+	setFre       string
 }
 
 func main() {
+	var sendNumA int
+	var sendNumB int
 	para := newPara()
-	para.wg.Add(3)
-	signal.Notify(para.sigChan, os.Interrupt)
-	go goroutine3(para)
-	go goroutine1(para)
-	go goroutine2(para)
-	para.wg.Wait()
+	var wg = sync.WaitGroup{}
+	wg.Add(2)
+
+	var msgSend = make(chan bool, 1)
+	var msgRecv = make(chan bool, 1)
+	go goroutine(&wg, &sendNumA, msgSend, msgRecv, para.freA)
+	go goroutine(&wg, &sendNumB, msgRecv, msgSend, para.freB)
+
+	getSetPara(para, &sendNumA, &sendNumB)
+	wg.Wait()
 }
