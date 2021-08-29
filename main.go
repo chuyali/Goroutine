@@ -12,10 +12,11 @@ import (
 )
 
 //根据设置的频率发送数据，并监听Ctrl+c，若输入Ctrl+c则退出
-func goroutine(wg *sync.WaitGroup, sendNum *int, msgRecv, msgSend chan bool, fre int) {
+func goroutine(wg *sync.WaitGroup, sendNumList []chan int, require chan int, msgRecv, msgSend chan bool, fre int) {
 	defer wg.Done()
 	var sigChan = make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
+	var num int
 	t := time.Tick(time.Duration(fre) * time.Second)
 	for {
 		select {
@@ -25,24 +26,48 @@ func goroutine(wg *sync.WaitGroup, sendNum *int, msgRecv, msgSend chan bool, fre
 			return
 		case <-t:
 			msgRecv <- true
-			*sendNum++
+			num++
 		case <-msgSend:
-
+		case iD := <-require:
+			fmt.Println("goroutine iD", iD)
+			sendNumList[iD] <- num
 		default:
 		}
 	}
 }
 
-func getSetPara(para *paraOption, sendNumA, sendNumB *int) {
+func getSetPara(para *paraOption, requireA, requireB chan int, sendNumA, sendNumB chan int, iD int) {
 	var sigChan = make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 	fmt.Println(`please enter your demand:
 		set-ping-pong A 3s : set goroutine frequency A 3s and B default
 		set-ping-pong B 3s : set goroutine frequency B 3s and A default
 		set-ping-pong 3s : set goroutine A frequency 3s and B 3s
-		get-ping-pong:get sendNum and frequency of goroutine A and goroutine B
+		get-ping-pongA :get sendNum and frequency of goroutine A 
+		get-ping-pongB :get sendNum and frequency of goroutine B
 		`)
 	for {
+		fmt.Scanf("%s %s %s\n", &para.pingPongOpt, &para.setGoroutine, &para.setFre)
+		re := regexp.MustCompile("[0-9]+")
+		freNum, _ := strconv.Atoi(re.FindString(para.setFre))
+		switch {
+		case para.pingPongOpt == "set" && para.setGoroutine == "A":
+			para.freA = freNum
+		case para.pingPongOpt == "set" && para.setGoroutine == "B":
+			para.freB = freNum
+		case para.pingPongOpt == "set" && freNum != 0:
+			para.freA = freNum
+			para.freB = freNum
+		case para.pingPongOpt == "getA":
+			requireA <- iD
+			getSendNum(para.freA, sendNumA, iD)
+		case para.pingPongOpt == "getB":
+			requireB <- iD
+			getSendNum(para.freB, sendNumB, iD)
+		default:
+		}
+		fmt.Printf("frequency A : %s B : %s:\n",
+			strconv.Itoa(para.freA)+"s", strconv.Itoa(para.freB)+"s")
 		select {
 		case sig := <-sigChan:
 			fmt.Println("for | get", sig)
@@ -50,23 +75,15 @@ func getSetPara(para *paraOption, sendNumA, sendNumB *int) {
 			return
 		default:
 		}
-		fmt.Scanf("%s %s %s\n", &para.pingPongOpt, &para.setGoroutine, &para.setFre)
-		re := regexp.MustCompile("[0-9]+")
-		freNum, _ := strconv.Atoi(re.FindString(para.setFre))
-		switch {
-		case para.pingPongOpt == "set-ping-pong" && para.setGoroutine == "A" && freNum != 0:
-			para.freA = freNum
-		case para.pingPongOpt == "set-ping-pong" && para.setGoroutine == "B" && freNum != 0:
-			para.freB = freNum
-		case para.pingPongOpt == "set-ping-pong" && freNum != 0:
-			para.freA = freNum
-			para.freB = freNum
-		case para.pingPongOpt == "get-ping-pong":
-			fmt.Printf("goroutineA sendNum %d sendFre %s,goroutineB sendNum %d sendFre %s\n",
-				*sendNumA, strconv.Itoa(para.freA)+"s", *sendNumB, strconv.Itoa(para.freB)+"s")
-		}
-		fmt.Printf("frequency A : %s B : %s:\n",
-			strconv.Itoa(para.freA)+"s", strconv.Itoa(para.freB)+"s")
+	}
+}
+func getSendNum(fre int, sendNum chan int, iD int) {
+	select {
+	case num := <-sendNum:
+		fmt.Printf("iD : %d ,goroutineA sendNum %d sendFre %s\n",
+			iD, num, strconv.Itoa(fre)+"s")
+	case <-time.After(1 * time.Second):
+		fmt.Println("超时")
 	}
 }
 func newPara() *paraOption {
@@ -85,17 +102,27 @@ type paraOption struct {
 }
 
 func main() {
-	var sendNumA int
-	var sendNumB int
+	var MAX_CLIENT = 4
 	para := newPara()
 	var wg = sync.WaitGroup{}
 	wg.Add(2)
 
 	var msgSend = make(chan bool, 1)
 	var msgRecv = make(chan bool, 1)
-	go goroutine(&wg, &sendNumA, msgSend, msgRecv, para.freA)
-	go goroutine(&wg, &sendNumB, msgRecv, msgSend, para.freB)
+	sendNumAList := []chan int{}
+	sendNumBList := []chan int{}
+	for i := 0; i < MAX_CLIENT; i++ {
+		tmp := make(chan int, 1)
+		sendNumAList = append(sendNumAList, tmp)
+		sendNumBList = append(sendNumBList, tmp)
+	}
+	var requireA = make(chan int, 1)
+	var requireB = make(chan int, 1)
+	go goroutine(&wg, sendNumAList, requireA, msgSend, msgRecv, para.freA)
+	go goroutine(&wg, sendNumBList, requireB, msgRecv, msgSend, para.freB)
+	for i := 0; i < MAX_CLIENT; i++ {
+		go getSetPara(para, requireA, requireB, sendNumAList[i], sendNumBList[i], i)
+	}
 
-	getSetPara(para, &sendNumA, &sendNumB)
 	wg.Wait()
 }
